@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+    Template for helper resources based on Lambda-backend custom resources
+
+Parameters:
+  ResourceNamePrefix:
+    Description: Prefix of resource name
+    Type: String
+    Default: cfn-helper
+
+Resources:
+  LambdaBasicExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ResourceNamePrefix}-lambda-basic-execution-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  MapFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import cfnresponse
+          def handler(event, context):
+            try:
+              input = event['ResourceProperties']['Input']
+              value = event['ResourceProperties']['Value']
+              param = event['ResourceProperties'].get('ParameterString', '?')
+              if type(input) is not list or type(param) is not str:
+                cfnresponse.send(event, context, cfnresponse.FAILED, {})
+              output = [replace(value, v, param) for v in input]
+              response_data = {}
+              response_data['Output'] = output
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+            except Exception as e:
+              cfnresponse.send(event, context, cfnresponse.FAILED, {})
+          def replace(value, replacement, param):
+            if type(value) is str and value == param:
+              return replacement
+            if type(value) is list:
+              return replaceList(value, replacement, param)
+            if type(value) is dict:
+              return replaceDict(value, replacement, param)
+            return value
+          def replaceList(value, replacement, param):
+            return [replace(v, replacement, param) for v in value]
+          def replaceDict(value, replacement, param):
+            return dict([(k, replace(v, replacement, param)) for k, v in value.items()])
+      FunctionName: !Sub ${ResourceNamePrefix}-cfn-map-function
+      Description: Map function for CloudFormatiomn
+      Handler: index.handler
+      MemorySize: 128
+      Role: !GetAtt LambdaBasicExecutionRole.Arn
+      Runtime: python3.6
+      Timeout: 10
+
+Outputs:
+  MapFunctionServiceToken:
+    Description: Service token of the map function custom resource
+    Value: !GetAtt MapFunction.Arn
