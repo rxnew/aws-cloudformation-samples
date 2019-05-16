@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+    Template for a stack of Multi-AZ VPC network
+
+Parameters:
+  ResourceNamePrefix:
+    Description: Prefix of resource name
+    Type: String
+    Default: cfn-multi-az-vpc
+  AvailabilityZone1:
+    Description: Availability Zone 1
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: ap-northeast-1a
+  AvailabilityZone2:
+    Description: Availability Zone 2
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: ap-northeast-1c
+  CidrBlock:
+    Description: CIDR block of VPC
+    Type: String
+    AllowedPattern: '(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])/([12]?\d|3[0-2])'
+    Default: 10.0.0.0/16
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref CidrBlock
+      InstanceTenancy: default
+      EnableDnsSupport: true
+      EnableDnsHostnames: false
+      Tags:
+        - Key: Name
+          Value: !Ref ResourceNamePrefix
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref ResourceNamePrefix
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  DhcpOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: !Sub ${AWS::Region}.compute.internal
+      DomainNameServers:
+        - AmazonProvidedDNS
+      Tags:
+        - Key: Name
+          Value: !Ref ResourceNamePrefix
+
+  DhcpOptionsAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      VpcId: !Ref Vpc
+      DhcpOptionsId: !Ref DhcpOptions
+
+  SubnetStack1:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./network-subnet.template.yml
+      TimeoutInMinutes: 15
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        VpcId: !Ref Vpc
+        InternetGatewayId: !Ref InternetGateway
+        AvailabilityZone: !Ref AvailabilityZone1
+        AvailabilityZoneId: '1'
+        PublicSubnetCidrBlock: !Select [0, !Cidr [!Select [0, !Cidr [!Ref CidrBlock, 2, 12]], 2, 8]]
+        PrivateSubnetCidrBlock: !Select [0, !Cidr [!Select [1, !Cidr [!Ref CidrBlock, 2, 12]], 2, 8]]
+
+  SubnetStack2:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./network-subnet.template.yml
+      TimeoutInMinutes: 15
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        VpcId: !Ref Vpc
+        InternetGatewayId: !Ref InternetGateway
+        AvailabilityZone: !Ref AvailabilityZone2
+        AvailabilityZoneId: '2'
+        PublicSubnetCidrBlock: !Select [1, !Cidr [!Select [0, !Cidr [!Ref CidrBlock, 2, 12]], 2, 8]]
+        PrivateSubnetCidrBlock: !Select [1, !Cidr [!Select [1, !Cidr [!Ref CidrBlock, 2, 12]], 2, 8]]
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref Vpc
+  PublicSubnetIdList:
+    Description: Public subnet ID list
+    Value: !Join
+      - ','
+      - - !GetAtt SubnetStack1.Outputs.PublicSubnetId
+        - !GetAtt SubnetStack2.Outputs.PublicSubnetId
+  PrivateSubnetIdList:
+    Description: Private subnet ID list
+    Value: !Join
+      - ','
+      - - !GetAtt SubnetStack1.Outputs.PrivateSubnetId
+        - !GetAtt SubnetStack2.Outputs.PrivateSubnetId
+  PublicSubnetCidrBlock:
+    Description: CIDR block of public subnet
+    Value: !Select [0, !Cidr [!Ref CidrBlock, 2, 12]]
+  PrivateSubnetCidrBlock:
+    Description: CIDR block of private subnet
+    Value: !Select [1, !Cidr [!Ref CidrBlock, 2, 12]]
+  AvailabilityZoneList:
+    Description: Availability Zone list
+    Value: !Join
+      - ','
+      - - !Ref AvailabilityZone1
+        - !Ref AvailabilityZone2
