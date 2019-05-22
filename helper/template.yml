@@ -9,21 +9,9 @@ Parameters:
     Default: cfn-helper
 
 Resources:
-  LambdaBasicExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${ResourceNamePrefix}-lambda-basic-execution-role
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Path: /
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-
+  # ------------------------------------------------------------#
+  #  Lambda
+  # ------------------------------------------------------------#
   MapFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -63,7 +51,200 @@ Resources:
       Runtime: python3.6
       Timeout: 10
 
+  Route53HostedZoneFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import re
+          import boto3
+          import cfnresponse
+          client = boto3.client('route53')
+          def handler(event, context):
+            try:
+              if event['RequestType'] == 'Delete':
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              domain = event['ResourceProperties']['DomainName']
+              zones = collect(domain)
+              if zones:
+                zone = max(zones, key=lambda x: len(x['Name']))
+                response_data = {
+                  'Id': zone['Id'].replace('/hostedzone/', ''),
+                  'Name': zone['Name']
+                }
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+              else:
+                cfnresponse.send(event, context, cfnresponse.FAILED, {})
+            except Exception as e:
+              cfnresponse.send(event, context, cfnresponse.FAILED, {})
+          def collect(domain, marker=None):
+            if marker:
+              response = client.list_hosted_zones(
+                Marker=marker,
+                MaxItems='100'
+              )
+            else:
+              response = client.list_hosted_zones(
+                MaxItems='100'
+              )
+            zones = [zone for zone in response['HostedZones'] if match(domain, zone['Name'])]
+            next_marker = response.get('NextMarker')
+            if next_marker:
+              return zones + collect(domain, next_marker)
+            return zones
+          def match(domain, dns_name):
+            domain_pattern = '^(.+\.)*' + dns_name.rstrip('.') + '$'
+            if re.match(domain_pattern, domain):
+              return True
+            return False
+      FunctionName: !Sub ${ResourceNamePrefix}-cfn-route53-hostedzone
+      Description: A function to get Route53 HostedZone ID from domain name for CloudFormatiomn
+      Handler: index.handler
+      MemorySize: 128
+      Role: !GetAtt Route53HostedZoneFunctionRole.Arn
+      Runtime: python3.6
+      Timeout: 15
+
+  AcmCertificateFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import os
+          import re
+          import boto3
+          import cfnresponse
+          DEFAULT_REGION = os.environ.get('DEFAULT_REGION', 'ap-northeast-1')
+          def handler(event, context):
+            try:
+              if event['RequestType'] == 'Delete':
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              domain = event['ResourceProperties']['DomainName']
+              region = event['ResourceProperties'].get('Region', DEFAULT_REGION)
+              arn = get_client(region)(domain)
+              if arn:
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Arn': arn})
+              else:
+                cfnresponse.send(event, context, cfnresponse.FAILED, {})
+            except Exception as e:
+              cfnresponse.send(event, context, cfnresponse.FAILED, {})
+          def get_client(region):
+            client = boto3.client('acm', region_name=region)
+            def find(domain, next_token=None):
+              if next_token:
+                response = client.list_certificates(
+                  CertificateStatuses=['ISSUED'],
+                  NextToken=next_token,
+                  MaxItems=100
+                )
+              else:
+                response = client.list_certificates(
+                  CertificateStatuses=['ISSUED'],
+                  MaxItems=100
+                )
+              for cert in response['CertificateSummaryList']:
+                if match(domain, cert['DomainName']):
+                  return cert['CertificateArn']
+              next_token = response.get('NextToken')
+              if next_token:
+                return find(domain, next_token)
+              return None
+            return find
+          def match(domain, cert_domain):
+            domain_pattern = '^' + cert_domain.replace('*', '.+') + '$'
+            if re.match(domain_pattern, domain):
+              return True
+            return False
+      FunctionName: !Sub ${ResourceNamePrefix}-cfn-acm-certificate
+      Description: A function to get ACM certificate ARN from domain name for CloudFormatiomn
+      Handler: index.handler
+      MemorySize: 128
+      Role: !GetAtt AcmCertificateFunctionRole.Arn
+      Runtime: python3.6
+      Timeout: 15
+      Environment:
+        Variables:
+          DEFAULT_REGION: !Ref AWS::Region
+
+  # ------------------------------------------------------------#
+  #  Role
+  # ------------------------------------------------------------#
+  LambdaBasicExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ResourceNamePrefix}-lambda-basic-execution-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  Route53HostedZoneFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ResourceNamePrefix}-cfn-route53-hostedzone-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: acm-read-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - route53:GetHostedZone
+                  - route53:GetHostedZoneCount
+                  - route53:ListHostedZones
+                  - route53:ListHostedZonesByName
+                Resource: '*'
+
+  AcmCertificateFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ResourceNamePrefix}-cfn-acm-certificate-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: acm-read-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - acm:DescribeCertificate
+                  - acm:ListCertificates
+                  - acm:GetCertificate
+                  - acm:ListTagsForCertificate
+                Resource: '*'
+
 Outputs:
   MapFunctionServiceToken:
-    Description: Service token of the map function custom resource
+    Description: Service token of the map function custom resource.
     Value: !GetAtt MapFunction.Arn
+  Route53HostedZoneServiceToken:
+    Description: Service token to get a Route53 HostedZone custom resource.
+    Value: !GetAtt Route53HostedZoneFunction.Arn
+  AcmCertificateServiceToken:
+    Description: Service token to get an ACM certificate custom resource.
+    Value: !GetAtt AcmCertificateFunction.Arn
