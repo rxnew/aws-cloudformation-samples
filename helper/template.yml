@@ -51,6 +51,29 @@ Resources:
       Runtime: python3.6
       Timeout: 10
 
+  LenFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import cfnresponse
+          def handler(event, context):
+            try:
+              input = event['ResourceProperties']['Input']
+              output = len(input)
+              response_data = {}
+              response_data['Output'] = output
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+            except Exception as e:
+              cfnresponse.send(event, context, cfnresponse.FAILED, {})
+      FunctionName: !Sub ${ResourceNamePrefix}-cfn-len-function
+      Description: Length function for CloudFormatiomn
+      Handler: index.handler
+      MemorySize: 128
+      Role: !GetAtt LambdaBasicExecutionRole.Arn
+      Runtime: python3.6
+      Timeout: 10
+
   Route53HostedZoneFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -242,6 +265,9 @@ Outputs:
   MapFunctionServiceToken:
     Description: Service token of the map function custom resource.
     Value: !GetAtt MapFunction.Arn
+  LenFunctionServiceToken:
+    Description: Service token of the length function custom resource.
+    Value: !GetAtt LenFunction.Arn
   Route53HostedZoneServiceToken:
     Description: Service token to get a Route53 HostedZone custom resource.
     Value: !GetAtt Route53HostedZoneFunction.Arn
