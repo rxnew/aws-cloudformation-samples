@@ -7,6 +7,10 @@ Parameters:
     Description: Prefix of resource name
     Type: String
     Default: cfn-helper
+  LogRetentionInDays:
+    Description: Retention in days of CloudWatch Logs
+    Type: Number
+    Default: 3
 
 Resources:
   # ------------------------------------------------------------#
@@ -188,6 +192,33 @@ Resources:
       Environment:
         Variables:
           DEFAULT_REGION: !Ref AWS::Region
+
+  # ------------------------------------------------------------#
+  #  CloudWatch Logs
+  # ------------------------------------------------------------#
+  MapFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${MapFunction}
+      RetentionInDays: !Ref LogRetentionInDays
+
+  LenFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${LenFunction}
+      RetentionInDays: !Ref LogRetentionInDays
+
+  Route53HostedZoneFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Route53HostedZoneFunction}
+      RetentionInDays: !Ref LogRetentionInDays
+
+  AcmCertificateFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AcmCertificateFunction}
+      RetentionInDays: !Ref LogRetentionInDays
 
   # ------------------------------------------------------------#
   #  Role
