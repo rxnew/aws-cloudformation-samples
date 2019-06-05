@@ -1,14 +1,14 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: >
-    Template for helper resources based on Lambda-backend custom resources
+    Template for helper resources based on Lambda-backend custom resources.
 
 Parameters:
   ResourceNamePrefix:
-    Description: Prefix of resource name
+    Description: Prefix of resource name.
     Type: String
     Default: cfn-helper
-  LogRetentionInDays:
-    Description: Retention in days of CloudWatch Logs
+  LogRetentionDays:
+    Description: Retention in days of CloudWatch Logs.
     Type: Number
     Default: 3
 
@@ -22,6 +22,11 @@ Resources:
       Code:
         ZipFile: |
           import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
           def handler(event, context):
             try:
               input = event['ResourceProperties']['Input']
@@ -34,7 +39,9 @@ Resources:
               response_data['Output'] = output
               cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
             except Exception as e:
+              logger.error(e)
               cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
           def replace(value, replacement, param):
             if type(value) is str and value == param:
               return replacement
@@ -43,17 +50,20 @@ Resources:
             if type(value) is dict:
               return replaceDict(value, replacement, param)
             return value
+
           def replaceList(value, replacement, param):
             return [replace(v, replacement, param) for v in value]
+
           def replaceDict(value, replacement, param):
             return dict([(k, replace(v, replacement, param)) for k, v in value.items()])
+
       FunctionName: !Sub ${ResourceNamePrefix}-cfn-map-function
-      Description: Map function for CloudFormatiomn
+      Description: Map function for CloudFormatiomn.
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt LambdaBasicExecutionRole.Arn
       Runtime: python3.6
-      Timeout: 10
+      Timeout: 5
 
   LenFunction:
     Type: AWS::Lambda::Function
@@ -61,6 +71,11 @@ Resources:
       Code:
         ZipFile: |
           import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
           def handler(event, context):
             try:
               input = event['ResourceProperties']['Input']
@@ -69,6 +84,7 @@ Resources:
               response_data['Output'] = output
               cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
             except Exception as e:
+              logger.error(e)
               cfnresponse.send(event, context, cfnresponse.FAILED, {})
       FunctionName: !Sub ${ResourceNamePrefix}-cfn-len-function
       Description: Length function for CloudFormatiomn
@@ -86,7 +102,13 @@ Resources:
           import re
           import boto3
           import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
           client = boto3.client('route53')
+
           def handler(event, context):
             try:
               if event['RequestType'] == 'Delete':
@@ -101,9 +123,12 @@ Resources:
                 }
                 cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
               else:
+                logger.error('HostedZone not found.')
                 cfnresponse.send(event, context, cfnresponse.FAILED, {})
             except Exception as e:
+              logger.error(e)
               cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
           def collect(domain, marker=None):
             if marker:
               response = client.list_hosted_zones(
@@ -119,13 +144,15 @@ Resources:
             if next_marker:
               return zones + collect(domain, next_marker)
             return zones
+
           def match(domain, dns_name):
             domain_pattern = '^(.+\.)*' + dns_name.rstrip('.') + '$'
             if re.match(domain_pattern, domain):
               return True
             return False
+
       FunctionName: !Sub ${ResourceNamePrefix}-cfn-route53-hostedzone
-      Description: A function to get Route53 HostedZone ID from domain name for CloudFormatiomn
+      Description: A function to get Route53 HostedZone ID from domain name for CloudFormatiomn.
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt Route53HostedZoneFunctionRole.Arn
@@ -141,7 +168,13 @@ Resources:
           import re
           import boto3
           import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
           DEFAULT_REGION = os.environ.get('DEFAULT_REGION', 'ap-northeast-1')
+
           def handler(event, context):
             try:
               if event['RequestType'] == 'Delete':
@@ -152,9 +185,12 @@ Resources:
               if arn:
                 cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Arn': arn})
               else:
+                logger.error('Certificate not found.')
                 cfnresponse.send(event, context, cfnresponse.FAILED, {})
             except Exception as e:
+              logger.error(e)
               cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
           def get_client(region):
             client = boto3.client('acm', region_name=region)
             def find(domain, next_token=None):
@@ -177,13 +213,15 @@ Resources:
                 return find(domain, next_token)
               return None
             return find
+
           def match(domain, cert_domain):
             domain_pattern = '^' + cert_domain.replace('*', '.+') + '$'
             if re.match(domain_pattern, domain):
               return True
             return False
+
       FunctionName: !Sub ${ResourceNamePrefix}-cfn-acm-certificate
-      Description: A function to get ACM certificate ARN from domain name for CloudFormatiomn
+      Description: A function to get ACM certificate ARN from domain name for CloudFormatiomn.
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt AcmCertificateFunctionRole.Arn
@@ -193,6 +231,51 @@ Resources:
         Variables:
           DEFAULT_REGION: !Ref AWS::Region
 
+  ElastiCacheNodeGroupConfigurationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+            try:
+              if event['RequestType'] == 'Delete':
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              zones = event['ResourceProperties']['AvailabilityZones']
+              num_groups = int(event['ResourceProperties']['NumNodeGroups'])
+              num_replicas = int(event['ResourceProperties'].get('ReplicasPerNodeGroup', len(zones) - 1))
+              value = [make_config(n, num_replicas, zones) for n in range(num_groups)]
+              response_data = {'Value': value}
+              logger.info(response_data)
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+            except Exception as e:
+              logger.error(e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+          def make_config(group_no, num_replicas, zones):
+            num_zones = len(zones)
+            num_replica_zones = min(num_zones, num_replicas)
+            zone_no = group_no % num_zones
+            replica_zones = [zones[(zone_no + n + 1) % num_zones] for n in range(num_replica_zones)]
+            return {
+              'PrimaryAvailabilityZone': zones[zone_no],
+              'ReplicaAvailabilityZones': replica_zones,
+              'ReplicaCount': len(replica_zones)
+            }
+
+      FunctionName: !Sub ${ResourceNamePrefix}-cfn-cache-nodegroupconfig
+      Description: A function to create a NodeGroupConfiguration parameter of ElastiCache ReplicationGroup resources for CloudFormatiomn.
+      Handler: index.handler
+      MemorySize: 128
+      Role: !GetAtt LambdaBasicExecutionRole.Arn
+      Runtime: python3.6
+      Timeout: 5
+
   # ------------------------------------------------------------#
   #  CloudWatch Logs
   # ------------------------------------------------------------#
@@ -200,25 +283,31 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${MapFunction}
-      RetentionInDays: !Ref LogRetentionInDays
+      RetentionInDays: !Ref LogRetentionDays
 
   LenFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${LenFunction}
-      RetentionInDays: !Ref LogRetentionInDays
+      RetentionInDays: !Ref LogRetentionDays
 
   Route53HostedZoneFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${Route53HostedZoneFunction}
-      RetentionInDays: !Ref LogRetentionInDays
+      RetentionInDays: !Ref LogRetentionDays
 
   AcmCertificateFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${AcmCertificateFunction}
-      RetentionInDays: !Ref LogRetentionInDays
+      RetentionInDays: !Ref LogRetentionDays
+
+  ElastiCacheNodeGroupConfigurationFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ElastiCacheNodeGroupConfigurationFunction}
+      RetentionInDays: !Ref LogRetentionDays
 
   # ------------------------------------------------------------#
   #  Role
@@ -226,7 +315,7 @@ Resources:
   LambdaBasicExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub ${ResourceNamePrefix}-lambda-basic-execution-role
+      RoleName: !Sub ${ResourceNamePrefix}-cfn-lambda-basic-execution-role
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -296,12 +385,25 @@ Outputs:
   MapFunctionServiceToken:
     Description: Service token of the map function custom resource.
     Value: !GetAtt MapFunction.Arn
+    Export:
+      Name: !Sub ${ResourceNamePrefix}-MapFunctionServiceToken
   LenFunctionServiceToken:
     Description: Service token of the length function custom resource.
     Value: !GetAtt LenFunction.Arn
+    Export:
+      Name: !Sub ${ResourceNamePrefix}-LenFunctionServiceToken
   Route53HostedZoneServiceToken:
     Description: Service token to get a Route53 HostedZone custom resource.
     Value: !GetAtt Route53HostedZoneFunction.Arn
+    Export:
+      Name: !Sub ${ResourceNamePrefix}-Route53HostedZoneServiceToken
   AcmCertificateServiceToken:
     Description: Service token to get an ACM certificate custom resource.
     Value: !GetAtt AcmCertificateFunction.Arn
+    Export:
+      Name: !Sub ${ResourceNamePrefix}-AcmCertificateServiceToken
+  ElastiCacheNodeGroupConfigurationServiceToken:
+    Description: Service token of the ElastiCache NodeGroupConfiguration custom resource.
+    Value: !GetAtt ElastiCacheNodeGroupConfigurationFunction.Arn
+    Export:
+      Name: !Sub ${ResourceNamePrefix}-ElastiCacheNodeGroupConfigurationServiceToken
