@@ -34,6 +34,7 @@ Resources:
               param = event['ResourceProperties'].get('ParameterString', '?')
               if type(input) is not list or type(param) is not str:
                 cfnresponse.send(event, context, cfnresponse.FAILED, {})
+                return
               output = [replace(value, v, param) for v in input]
               response_data = {}
               response_data['Output'] = output
@@ -113,6 +114,7 @@ Resources:
             try:
               if event['RequestType'] == 'Delete':
                 cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                return
               domain = event['ResourceProperties']['DomainName']
               zones = collect(domain)
               if zones:
@@ -179,6 +181,7 @@ Resources:
             try:
               if event['RequestType'] == 'Delete':
                 cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                return
               domain = event['ResourceProperties']['DomainName']
               region = event['ResourceProperties'].get('Region', DEFAULT_REGION)
               arn = get_client(region)(domain)
@@ -246,6 +249,7 @@ Resources:
             try:
               if event['RequestType'] == 'Delete':
                 cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                return
               zones = event['ResourceProperties']['AvailabilityZones']
               num_groups = int(event['ResourceProperties']['NumNodeGroups'])
               num_replicas = int(event['ResourceProperties'].get('ReplicasPerNodeGroup', len(zones) - 1))
