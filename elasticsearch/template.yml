@@ -1,0 +1,83 @@
+Parameters:
+  EnvName:
+    Description: Environment name.
+    Type: String
+  ESDomainName:
+    Description: Elasticsearch domain name.
+    Type: String
+    MinLength: 3
+    MaxLength: 28
+    AllowedPattern: '^[a-z0-9+-]*$'
+  VpcId:
+    Description: VPC ID.
+    Type: AWS::EC2::VPC::Id
+  SubnetIdList:
+    Description: Subnet ID list.
+    Type: List<AWS::EC2::Subnet::Id>
+  VpcCidrBlock:
+    Description: CIDR block of VPC.
+    Type: String
+    AllowedPattern: '(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])/([12]?\d|3[0-2])'
+
+Resources:
+  # ------------------------------------------------------------#
+  #  Elasticsearch
+  # ------------------------------------------------------------#
+  Elasticsearch:
+    Type: AWS::Elasticsearch::Domain
+    Properties:
+      AccessPolicies:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 'es:*'
+            Resource: !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${ESDomainName}
+      DomainName: !Ref ESDomainName
+      EBSOptions:
+        EBSEnabled: true
+        VolumeSize: 10
+        VolumeType: gp2
+      ElasticsearchClusterConfig:
+        InstanceCount: 2
+        InstanceType: t2.small.elasticsearch
+        ZoneAwarenessEnabled: true
+      ElasticsearchVersion: 6.2
+      SnapshotOptions:
+        AutomatedSnapshotStartHour: 17
+      VPCOptions:
+        SubnetIds: !Ref SubnetIdList
+        SecurityGroupIds:
+          - !Ref SecurityGroup
+    DependsOn: ServiceLinkedRole
+
+  # ------------------------------------------------------------#
+  #  Role
+  # ------------------------------------------------------------#
+  ServiceLinkedRole:
+    Type: AWS::IAM::ServiceLinkedRole
+    Properties:
+      AWSServiceName: es.amazonaws.com
+      CustomSuffix: !Sub -${EnvName}
+      Description: For Elasticsearch Service
+
+  # ------------------------------------------------------------#
+  #  SecurityGroup
+  # ------------------------------------------------------------#
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvName}-es
+      GroupDescription: SecurityGroup for the Elasticsearch Service domain
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidrBlock
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvName}-es
+        - Key: Environment
+          Value: !Ref EnvName

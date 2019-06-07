@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Template for TempLoop is CloudFormation macro.
+
+Parameters:
+  LogRetentionDays:
+    Description: Retention in days of CloudWatch Logs.
+    Type: Number
+    Default: 3
+
+Resources:
+  # ------------------------------------------------------------#
+  #  Macro
+  # ------------------------------------------------------------#
+  Macro:
+    Type: AWS::CloudFormation::Macro
+    Properties:
+      Name: TempLoop
+      Description: The macro makes multiple resources from a list.
+      FunctionName: !GetAtt Function.Arn
+
+  # ------------------------------------------------------------#
+  #  Lambda
+  # ------------------------------------------------------------#
+  Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src
+      FunctionName: temploop-function
+      Description: '[TempLoop] The function for CloudFormatiomn macro.'
+      Handler: index.handler
+      MemorySize: 128
+      Role: !GetAtt LambdaBasicExecutionRole.Arn
+      Runtime: python3.6
+      Timeout: 10
+
+  # ------------------------------------------------------------#
+  #  Role
+  # ------------------------------------------------------------#
+  LambdaBasicExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: temploop-lambda-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # ------------------------------------------------------------#
+  #  CloudWatch Logs
+  # ------------------------------------------------------------#
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Function}
+      RetentionInDays: !Ref LogRetentionDays
+
+Outputs:
+  MacroName:
+    Value: TempLoop
+    Description: Macro name.
+    Export:
+      Name: TempLoop

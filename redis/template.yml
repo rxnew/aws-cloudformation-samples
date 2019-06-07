@@ -1,0 +1,232 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: TempLoop
+Description: >
+  Template for a stack of ElastiCache Redis.
+  This template requires TempLoop macro.
+
+Parameters:
+  EnvName:
+    Description: Environment name.
+    Type: String
+  RedisMajorVersion:
+    Description: Redis major version.
+    Type: String
+    Default: '5.0'
+  RedisMinorVersion:
+    Description: Redis minor version.
+    Type: String
+    Default: '3'
+  RedisNodeType:
+    Description: Node type of the Redis instance.
+    Type: String
+    Default: cache.m3.medium
+  RedisPort:
+    Description: Port number on which Redis accepts connections.
+    Type: Number
+    Default: 6379
+  RedisClusterEnabled:
+    Description: Enabled Redis cluster mode.
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: false
+  RedisShardNum:
+    Description: |
+      Number of Redis shards (Node groups of ElastiCache).
+      When RedisClusterEnabled is false, this parameter is ignored.
+    Type: Number
+    MinValue: 1
+    Default: 2
+  RedisNodeNum:
+    Description: |
+      Number of Redis nodes per shard (Total number of one primary node and replica nodes of ElastiCache).
+      When this parameter is -1, the number of nodes is set the number of AvailabilityZones.
+    Type: Number
+    MinValue: -1
+    Default: -1
+  VpcId:
+    Description: VPC ID.
+    Type: AWS::EC2::VPC::Id
+  SubnetIdList:
+    Description: Subnet ID list.
+    Type: List<AWS::EC2::Subnet::Id>
+  AvailabilityZoneList:
+    Description: AvailabilityZone list.
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+  PrivateHostedZoneId:
+    Description: Private HostedZone ID.
+    Type: AWS::Route53::HostedZone::Id
+  PrivateHostedZoneName:
+    Description: Domain name of private HostedZone.
+    Type: String
+  AllowCidrBlockList:
+    Description: List of CIDR blocks to access to Redis.
+    Type: CommaDelimitedList
+  AllowSecurityGroupIdList:
+    Description: List of SecurityGroup IDs to access to Redis.
+    Type: List<AWS::EC2::SecurityGroup::Id>
+
+Conditions:
+  EnabledRedisCluster: !Equals [!Ref RedisClusterEnabled, true]
+  DisabledRedisCluster: !Not [!Condition EnabledRedisCluster]
+  EnabledRedisAutomaticFailover: !Not [!Equals [!Ref RedisNodeNum, 1]]
+  UseDefaultRedisNodeNum: !Equals [!Ref RedisNodeNum, -1]
+  CalcDefaultRedisNodeNum: !And [!Condition DisabledRedisCluster, !Condition UseDefaultRedisNodeNum]
+
+Resources:
+  # ------------------------------------------------------------#
+  #  ElastiCache
+  # ------------------------------------------------------------#
+  RedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Condition: DisabledRedisCluster
+    Properties:
+      ReplicationGroupId: !Sub ${EnvName}-redis
+      ReplicationGroupDescription: Redis
+      AutomaticFailoverEnabled: !If [EnabledRedisAutomaticFailover, true, false]
+      AutoMinorVersionUpgrade: false
+      CacheNodeType: !Ref RedisNodeType
+      CacheParameterGroupName: !Ref RedisParameterGroup
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      Engine: redis
+      EngineVersion: !Sub ${RedisMajorVersion}.${RedisMinorVersion}
+      NumCacheClusters: !If
+        - UseDefaultRedisNodeNum
+        - !GetAtt RedisNumCacheClusters.Output
+        - !Ref RedisNodeNum
+      Port: !Ref RedisPort
+      SecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      SnapshotRetentionLimit: 5
+      SnapshotWindow: sun:13:30-sun:14:30
+    DeletionPolicy: Delete
+
+  RedisClusterReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Condition: EnabledRedisCluster
+    Properties:
+      ReplicationGroupId: !Sub ${EnvName}-redis
+      ReplicationGroupDescription: Redis Cluster
+      AutomaticFailoverEnabled: true
+      AutoMinorVersionUpgrade: false
+      CacheNodeType: !Ref RedisNodeType
+      CacheParameterGroupName: !Ref RedisClusterParameterGroup
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      Engine: redis
+      EngineVersion: !Sub ${RedisMajorVersion}.${RedisMinorVersion}
+      NumNodeGroups: !Ref RedisShardNum
+      NodeGroupConfiguration: !GetAtt RedisClusterNodeGroupConfiguration.Value
+      Port: !Ref RedisPort
+      SecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      SnapshotRetentionLimit: 5
+      SnapshotWindow: sun:13:30-sun:14:30
+    DeletionPolicy: Delete
+    UpdatePolicy:
+      UseOnlineResharding: true
+
+  RedisNumCacheClusters:
+    Type: Custom::RedisNumCacheClusters
+    Condition: CalcDefaultRedisNodeNum
+    Version: 1.0
+    Properties:
+      ServiceToken:
+        Fn::ImportValue: !Sub ${EnvName}-LenFunctionServiceToken
+      Input: !Ref AvailabilityZoneList
+
+  RedisClusterNodeGroupConfiguration:
+    Type: Custom::RedisClusterNodeGroupConfiguration
+    Condition: EnabledRedisCluster
+    Version: 1.0
+    Properties:
+      ServiceToken:
+        Fn::ImportValue: !Sub ${EnvName}-ElastiCacheNodeGroupConfigurationServiceToken
+      AvailabilityZones: !Ref AvailabilityZoneList
+      NumNodeGroups: !Ref RedisShardNum
+      ReplicasPerNodeGroup: !If
+        - UseDefaultRedisNodeNum
+        - !Ref AWS::NoValue
+        - !Ref RedisNodeNum
+
+  RedisParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Condition: DisabledRedisCluster
+    Properties:
+      CacheParameterGroupFamily: !Sub Redis${RedisMajorVersion}
+      Description: ParameterGroup for Redis
+
+  RedisClusterParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Condition: EnabledRedisCluster
+    Properties:
+      CacheParameterGroupFamily: !Sub Redis${RedisMajorVersion}
+      Description: ParameterGroup for Redis Cluster
+      Properties:  # Update not supported
+        cluster-enabled: 'yes'
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub ${EnvName}-redis
+      Description: SubnetGroup for Redis
+      SubnetIds: !Ref SubnetIdList
+
+  # ------------------------------------------------------------#
+  #  SecurityGroup
+  # ------------------------------------------------------------#
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvName}-redis
+      GroupDescription: SecurityGroup for Redis
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvName}-redis
+        - Key: Environment
+          Value: !Ref EnvName
+
+  RedisSecurityGroupIngressForCidrBlock:
+    Type: List<AWS::EC2::SecurityGroupIngress>
+    Metadata:
+      TempLoop::Iteration: !Ref AllowCidrBlockList
+    Properties:
+      GroupId: !Ref RedisSecurityGroup
+      Description: !Sub Allow access from CIDR Block ${TempLoop::Item}
+      CidrIp: !Ref TempLoop::Item
+      FromPort: !Ref RedisPort
+      ToPort: !Ref RedisPort
+      IpProtocol: tcp
+
+  RedisSecurityGroupIngressForSecurityGroup:
+    Type: List<AWS::EC2::SecurityGroupIngress>
+    Metadata:
+      TempLoop::Iteration: !Ref AllowSecurityGroupIdList
+    Properties:
+      GroupId: !Ref RedisSecurityGroup
+      Description: !Sub Allow access from the SecurityGroup ${TempLoop::Item}
+      SourceSecurityGroupId: !Ref TempLoop::Item
+      FromPort: !Ref RedisPort
+      ToPort: !Ref RedisPort
+      IpProtocol: tcp
+
+  # ------------------------------------------------------------#
+  #  Route53
+  # ------------------------------------------------------------#
+  RedisDnsRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: !Sub redis.${PrivateHostedZoneName}
+      Comment: Domain name for Redis
+      HostedZoneId: !Ref PrivateHostedZoneId
+      Type: CNAME
+      TTL: '900'
+      ResourceRecords:
+        - !If
+          - EnabledRedisCluster
+          - !GetAtt RedisReplicationGroup.ConfigurationEndPoint.Address
+          - !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+
+Outputs:
+  RedisEndpointAddress:
+    Description: Connection endpoint for Redis.
+    Value: !Ref RedisDnsRecordSet
