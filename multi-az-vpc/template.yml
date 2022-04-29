@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: >
-    Template for a stack of Multi-AZ VPC network
+  Template for a stack of Multi-AZ VPC network
 
 Parameters:
   ResourceNamePrefix:
@@ -65,7 +65,7 @@ Resources:
   SubnetStack1:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: ./network-subnet.template.yml
+      TemplateURL: ./subnet.template.yml
       TimeoutInMinutes: 15
       Parameters:
         ResourceNamePrefix: !Ref ResourceNamePrefix
@@ -73,13 +73,13 @@ Resources:
         InternetGatewayId: !Ref InternetGateway
         AvailabilityZone: !Ref AvailabilityZone1
         AvailabilityZoneId: '1'
-        PublicSubnetCidrBlock: !Select [0, !Cidr [!Select [0, !Cidr [!Ref CidrBlock, 2, 12]], 2, 8]]
-        PrivateSubnetCidrBlock: !Select [0, !Cidr [!Select [1, !Cidr [!Ref CidrBlock, 2, 12]], 2, 8]]
+        PublicSubnetCidrBlock: !Select [ 0, !Cidr [ !Select [ 0, !Cidr [ !Ref CidrBlock, 2, 12 ] ], 2, 8 ] ]
+        PrivateSubnetCidrBlock: !Select [ 0, !Cidr [ !Select [ 1, !Cidr [ !Ref CidrBlock, 2, 12 ] ], 2, 8 ] ]
 
   SubnetStack2:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: ./network-subnet.template.yml
+      TemplateURL: ./subnet.template.yml
       TimeoutInMinutes: 15
       Parameters:
         ResourceNamePrefix: !Ref ResourceNamePrefix
@@ -87,8 +87,8 @@ Resources:
         InternetGatewayId: !Ref InternetGateway
         AvailabilityZone: !Ref AvailabilityZone2
         AvailabilityZoneId: '2'
-        PublicSubnetCidrBlock: !Select [1, !Cidr [!Select [0, !Cidr [!Ref CidrBlock, 2, 12]], 2, 8]]
-        PrivateSubnetCidrBlock: !Select [1, !Cidr [!Select [1, !Cidr [!Ref CidrBlock, 2, 12]], 2, 8]]
+        PublicSubnetCidrBlock: !Select [ 1, !Cidr [ !Select [ 0, !Cidr [ !Ref CidrBlock, 2, 12 ] ], 2, 8 ] ]
+        PrivateSubnetCidrBlock: !Select [ 1, !Cidr [ !Select [ 1, !Cidr [ !Ref CidrBlock, 2, 12 ] ], 2, 8 ] ]
 
 Outputs:
   VpcId:
@@ -108,10 +108,10 @@ Outputs:
         - !GetAtt SubnetStack2.Outputs.PrivateSubnetId
   PublicSubnetCidrBlock:
     Description: CIDR block of public subnet
-    Value: !Select [0, !Cidr [!Ref CidrBlock, 2, 12]]
+    Value: !Select [ 0, !Cidr [ !Ref CidrBlock, 2, 12 ] ]
   PrivateSubnetCidrBlock:
     Description: CIDR block of private subnet
-    Value: !Select [1, !Cidr [!Ref CidrBlock, 2, 12]]
+    Value: !Select [ 1, !Cidr [ !Ref CidrBlock, 2, 12 ] ]
   AvailabilityZoneList:
     Description: Availability Zone list
     Value: !Join

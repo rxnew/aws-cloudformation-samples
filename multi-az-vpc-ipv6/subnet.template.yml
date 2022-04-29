@@ -12,6 +12,9 @@ Parameters:
   InternetGatewayId:
     Description: Internet Gateway ID
     Type: String
+  EgressOnlyInternetGatewayId:
+    Description: Egress-Only Internet Gateway ID
+    Type: String
   AvailabilityZone:
     Description: Availability Zone
     Type: AWS::EC2::AvailabilityZone::Name
@@ -21,11 +24,12 @@ Parameters:
   PublicSubnetCidrBlock:
     Description: CIDR block of public subnet
     Type: String
-    AllowedPattern: '(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])/([12]?\d|3[0-2])'
-  PrivateSubnetCidrBlock:
-    Description: CIDR block of private subnet
+  PublicSubnetIpv6CidrBlock:
+    Description: IPv6 CIDR block of public subnet
     Type: String
-    AllowedPattern: '(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])\.(\d|[01]?\d\d|2[0-4]\d|25[0-5])/([12]?\d|3[0-2])'
+  PrivateSubnetIpv6CidrBlock:
+    Description: IPv6 CIDR block of private subnet
+    Type: String
 
 Resources:
   Eip:
@@ -36,7 +40,11 @@ Resources:
   PublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
+      Ipv6Native: false
+      EnableDns64: true
+      AssignIpv6AddressOnCreation: true
       CidrBlock: !Ref PublicSubnetCidrBlock
+      Ipv6CidrBlock: !Ref PublicSubnetIpv6CidrBlock
       AvailabilityZone: !Ref AvailabilityZone
       VpcId: !Ref VpcId
       Tags:
@@ -46,7 +54,10 @@ Resources:
   PrivateSubnet:
     Type: AWS::EC2::Subnet
     Properties:
-      CidrBlock: !Ref PrivateSubnetCidrBlock
+      Ipv6Native: true
+      EnableDns64: true
+      AssignIpv6AddressOnCreation: true
+      Ipv6CidrBlock: !Ref PrivateSubnetIpv6CidrBlock
       AvailabilityZone: !Ref AvailabilityZone
       VpcId: !Ref VpcId
       Tags:
@@ -85,10 +96,38 @@ Resources:
       RouteTableId: !Ref PublicRouteTable
       GatewayId: !Ref InternetGatewayId
 
+  Ipv6PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationIpv6CidrBlock: ::/0
+      RouteTableId: !Ref PublicRouteTable
+      GatewayId: !Ref InternetGatewayId
+
+  Ipv6PublicRouteNat64:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationIpv6CidrBlock: 64:ff9b::/96
+      RouteTableId: !Ref PublicRouteTable
+      NatGatewayId: !Ref NatGateway
+
   PrivateRoute:
     Type: AWS::EC2::Route
     Properties:
       DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref PrivateRouteTable
+      NatGatewayId: !Ref NatGateway
+
+  Ipv6PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationIpv6CidrBlock: ::/0
+      RouteTableId: !Ref PrivateRouteTable
+      EgressOnlyInternetGatewayId: !Ref EgressOnlyInternetGatewayId
+
+  Ipv6PrivateRouteNat64:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationIpv6CidrBlock: 64:ff9b::/96
       RouteTableId: !Ref PrivateRouteTable
       NatGatewayId: !Ref NatGateway
 
